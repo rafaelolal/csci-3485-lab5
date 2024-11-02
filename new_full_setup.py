@@ -293,7 +293,8 @@ def compute_iou(boxA, boxB):
     # Calculate IoU
     iou = interArea / (boxAArea + boxBArea - interArea)
 
-    return iou.item()  # Convert tensor to scalar for final result
+    # Take the mean of the IoU values
+    return torch.mean(iou).item()
 
 
 def calculate_accuracy(
