@@ -263,16 +263,16 @@ def compute_iou(boxA, boxB):
     Returns:
         float: IoU value between 0 and 1.
     """
-    # Convert boxes to tensors if they aren't already
+    # Convert and reshape boxes to ensure correct dimensionality
     boxA = (
-        torch.tensor(boxA, dtype=torch.float32)
+        torch.tensor(boxA, dtype=torch.float32).reshape(-1)
         if not isinstance(boxA, torch.Tensor)
-        else boxA
+        else boxA.reshape(-1)
     )
     boxB = (
-        torch.tensor(boxB, dtype=torch.float32)
+        torch.tensor(boxB, dtype=torch.float32).reshape(-1)
         if not isinstance(boxB, torch.Tensor)
-        else boxB
+        else boxB.reshape(-1)
     )
 
     # Find intersecting box coordinates using tensor operations
@@ -293,7 +293,6 @@ def compute_iou(boxA, boxB):
     # Calculate IoU
     iou = interArea / (boxAArea + boxBArea - interArea)
 
-    # Take the mean of the IoU values
     return torch.mean(iou).item()
 
 
