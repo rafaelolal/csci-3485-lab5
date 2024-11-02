@@ -1,11 +1,8 @@
 """Lab 5 Setup code"""
 
-# All setup should be ready to go with this code, just needs the paths to the images and ground truth boxes
-
 import glob
 import os
 import time
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -22,7 +19,7 @@ from torchvision.models.detection import (
 )
 from torchvision.ops import nms
 
-# Check for cuda
+# Check for CUDA
 if torch.cuda.is_available():
     device = torch.device("cuda")
 elif mps.is_available():
@@ -122,12 +119,12 @@ def load_models():
     """
     # Load and initialize Faster R-CNN with ResNet backbone
     faster_rcnn = fasterrcnn_resnet50_fpn(weights=FasterRCNN_ResNet50_FPN_Weights.DEFAULT)
-    faster_rcnn.eval()  # Set to evaluation mode
+    faster_rcnn.eval()  
     faster_rcnn_classes = FasterRCNN_ResNet50_FPN_Weights.DEFAULT.meta["categories"]
 
     # Load and initialize YOLOv5 from PyTorch Hub
     yolo = torch.hub.load("ultralytics/yolov5", "yolov5s", pretrained=True)
-    yolo.eval()  # Set to evaluation mode
+    yolo.eval() 
 
     return faster_rcnn, yolo, faster_rcnn_classes
 
@@ -162,7 +159,7 @@ def run_inference_and_visualize(
 
         # Faster R-CNN inference
         with torch.no_grad():
-            faster_rcnn_prediction = faster_rcnn([image])[0]
+            faster_rcnn_prediction = faster_rcnn([image.to(device)])[0]
             keep = nms(
                 faster_rcnn_prediction["boxes"],
                 faster_rcnn_prediction["scores"],
@@ -217,27 +214,27 @@ def run_inference_and_visualize(
             # Get detections
             for det in results.xyxy[0]:
                 x1, y1, x2, y2, conf, cls = det.cpu().numpy()
-                rect = plt.Rectangle(
-                    (x1, y1),
-                    x2 - x1,
-                    y2 - y1,
-                    fill=False,
-                    color="blue",
-                    linewidth=2,
-                )
-                ax.add_patch(rect)
-                ax.text(
-                    x1,
-                    y1 - 5,
-                    f"{yolo_classes[int(cls)]}: {conf:.2f}",
-                    color="blue",
-                    fontsize=12,
-                )
+                if int(cls) in [5, 7]:  # Only consider bus and truck
+                    rect = plt.Rectangle(
+                        (x1, y1),
+                        x2 - x1,
+                        y2 - y1,
+                        fill=False,
+                        color="blue",
+                        linewidth=2,
+                    )
+                    ax.add_patch(rect)
+                    ax.text(
+                        x1,
+                        y1 - 5,
+                        f"{yolo_classes[int(cls)]}: {conf:.2f}",
+                        color="blue",
+                        fontsize=12,
+                    )
 
         plt.title(f"YOLOv5 - Image {i+1}")
         plt.savefig(f"{save_folder}/yolo_image_{i+1}.png")
         plt.close()
-
 
 """FUNCTIONS FOR EVALUATING MODELS"""
 
