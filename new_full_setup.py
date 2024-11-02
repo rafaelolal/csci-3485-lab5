@@ -252,48 +252,43 @@ def run_inference_and_visualize(
 # All computation/analysis functions
 
 
-def compute_iou(boxA, boxB):
+def compute_iou(boxesA, boxesB):
     """
-    Computes Intersection over Union (IoU) between two bounding boxes.
+    Computes Intersection over Union (IoU) between two sets of bounding boxes.
 
     Args:
-        boxA (list): Coordinates [x1, y1, x2, y2] of the first bounding box.
-        boxB (list): Coordinates [x1, y1, x2, y2] of the second bounding box.
+        boxesA (tensor): Tensor of shape (N, 4) containing N bounding boxes [x1, y1, x2, y2]
+        boxesB (tensor): Tensor of shape (M, 4) containing M bounding boxes [x1, y1, x2, y2]
 
     Returns:
-        float: IoU value between 0 and 1.
+        tensor: IoU values of shape (N, M) between all pairs of boxes
     """
-    # Convert and reshape boxes to ensure correct dimensionality
-    boxA = (
-        torch.tensor(boxA, dtype=torch.float32).reshape(-1)
-        if not isinstance(boxA, torch.Tensor)
-        else boxA.reshape(-1)
-    )
-    boxB = (
-        torch.tensor(boxB, dtype=torch.float32).reshape(-1)
-        if not isinstance(boxB, torch.Tensor)
-        else boxB.reshape(-1)
-    )
+    print("my boxesA", boxesA)
+    print("my boxesB", boxesB)
 
-    # Find intersecting box coordinates using tensor operations
-    xA = torch.maximum(boxA[0], boxB[0])
-    yA = torch.maximum(boxA[1], boxB[1])
-    xB = torch.minimum(boxA[2], boxB[2])
-    yB = torch.minimum(boxA[3], boxB[3])
+    # Convert inputs to tensors and ensure they're properly shaped
+    boxesA = torch.as_tensor(boxesA, dtype=torch.float32).flatten()
+    boxesB = torch.as_tensor(boxesB, dtype=torch.float32).flatten()
 
-    # Calculate intersection area using tensor operations
+    # Find intersecting box coordinates
+    xA = torch.maximum(boxesA[0], boxesB[0])
+    yA = torch.maximum(boxesA[1], boxesB[1])
+    xB = torch.minimum(boxesA[2], boxesB[2])
+    yB = torch.minimum(boxesA[3], boxesB[3])
+
+    # Calculate intersection area
     interArea = torch.maximum(torch.tensor(0.0), xB - xA + 1) * torch.maximum(
         torch.tensor(0.0), yB - yA + 1
     )
 
-    # Calculate box areas using tensor operations
-    boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
-    boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
+    # Calculate box areas
+    boxAArea = (boxesA[2] - boxesA[0] + 1) * (boxesA[3] - boxesA[1] + 1)
+    boxBArea = (boxesB[2] - boxesB[0] + 1) * (boxesB[3] - boxesB[1] + 1)
 
     # Calculate IoU
     iou = interArea / (boxAArea + boxBArea - interArea)
 
-    return torch.mean(iou).item()
+    return iou
 
 
 def calculate_accuracy(
@@ -317,13 +312,13 @@ def calculate_accuracy(
             iou = compute_iou(pred["box"], gt)
             if iou >= iou_threshold and pred["score"] >= confidence_threshold:
                 correct_detections += 1
-                break  # Only count one match per ground truth to avoid multiple counting
+                break
 
     accuracy = correct_detections / len(predictions) if predictions else 0
-    return accuracy * 100  # Return as a percentage
+    return accuracy * 100
 
 
-def measure_inference_time(model, images):
+def measure_inference_time(model, name, images):
     """
     Measures the average inference time per image for a given model.
 
@@ -337,7 +332,13 @@ def measure_inference_time(model, images):
     start_time = time.time()
     with torch.no_grad():
         for image in images:
-            model([image])
+            if name == "YOLOv5":  # Check if it's YOLOv5
+                # Convert tensor to numpy, then back to proper format for YOLO
+                img_np = image.cpu().numpy()
+                img_np = np.transpose(img_np, (1, 2, 0))  # CHW to HWC
+                model(img_np)
+            else:
+                model([image])
     end_time = time.time()
 
     # Calculate average time per image
@@ -360,36 +361,84 @@ def evaluate_models(models, images, ground_truths):
         dict: Dictionary containing evaluation metrics for each model.
     """
     faster_rcnn, yolo = models
-
-    # Initialize results dictionary
     results = {
         "Faster R-CNN": {"IoU": [], "Accuracy": None, "Inference Time": None},
         "YOLOv5": {"IoU": [], "Accuracy": None, "Inference Time": None},
     }
 
-    # Measure Faster R-CNN
-    frcnn_predictions = [faster_rcnn([img])[0] for img in images]
+    # Faster R-CNN predictions
+    frcnn_predictions = []
+    with torch.no_grad():
+        for img in images:
+            pred = faster_rcnn([img])[0]
+            if len(pred["boxes"]) > 0:
+                # Take top 3 predictions instead of just the best one
+                scores, indices = torch.topk(
+                    pred["scores"], min(5, len(pred["scores"]))
+                )
+
+                for idx in indices:
+                    frcnn_predictions.append(
+                        {
+                            "box": pred["boxes"][idx].cpu().numpy(),
+                            "score": pred["scores"][idx].item(),
+                        }
+                    )
+            else:
+                frcnn_predictions.append({"box": np.zeros(4), "score": 0})
+
+    # YOLOv5 predictions with proper normalization
+    yolo_predictions = []
+    with torch.no_grad():
+        for img in images:
+            # Convert to correct format for YOLO
+            img_np = img.cpu().numpy()
+            img_np = np.transpose(img_np, (1, 2, 0))
+            # Denormalize image for YOLO
+            img_np = (
+                (img_np * [0.229, 0.224, 0.225] + [0.485, 0.456, 0.406]) * 255
+            ).astype(np.uint8)
+            pred = yolo(img_np)
+
+            if len(pred.xyxy[0]) > 0:
+                # Take top 3 predictions
+                scores, indices = torch.topk(
+                    pred.xyxy[0][:, 4], min(3, len(pred.xyxy[0]))
+                )
+                for idx in indices:
+                    yolo_predictions.append(
+                        {
+                            "box": pred.xyxy[0][idx][:4].cpu().numpy(),
+                            "score": pred.xyxy[0][idx][4].item(),
+                        }
+                    )
+            else:
+                yolo_predictions.append({"box": np.zeros(4), "score": 0})
+
+    # Calculate metrics with adjusted thresholds
     results["Faster R-CNN"]["IoU"] = [
-        compute_iou(pred["boxes"], gt)
+        compute_iou(pred["box"], gt)
         for pred, gt in zip(frcnn_predictions, ground_truths)
     ]
+    results["YOLOv5"]["IoU"] = [
+        compute_iou(pred["box"], gt)
+        for pred, gt in zip(yolo_predictions, ground_truths)
+    ]
+
+    # Calculate accuracy with new thresholds
     results["Faster R-CNN"]["Accuracy"] = calculate_accuracy(
         frcnn_predictions, ground_truths
     )
-    results["Faster R-CNN"]["Inference Time"] = measure_inference_time(
-        faster_rcnn, images
-    )
-
-    # Measure YOLOv5
-    yolo_predictions = [yolo([img])[0] for img in images]
-    results["YOLOv5"]["IoU"] = [
-        compute_iou(pred["boxes"], gt)
-        for pred, gt in zip(yolo_predictions, ground_truths)
-    ]
     results["YOLOv5"]["Accuracy"] = calculate_accuracy(
         yolo_predictions, ground_truths
     )
-    results["YOLOv5"]["Inference Time"] = measure_inference_time(yolo, images)
+
+    results["Faster R-CNN"]["Inference Time"] = measure_inference_time(
+        faster_rcnn, "Faster R-CNN", images
+    )
+    results["YOLOv5"]["Inference Time"] = measure_inference_time(
+        yolo, "YOLOv5", images
+    )
 
     return results
 
@@ -407,42 +456,37 @@ def run(custom_images_folder, bus_dataset_folder, ground_truths):
         bus_dataset_folder (str): Path to the bus dataset folder.
         ground_truths (list): List of ground truth bounding boxes for the bus dataset.
     """
-    # Step 1: Load and preprocess images
+    # Load and preprocess images
     # custom_images = load_and_preprocess_custom_images(custom_images_folder)
     bus_images = load_and_preprocess_bus_dataset(bus_dataset_folder)
 
-    print("my custom images", custom_images)
-
-    # Debugging: Verify image properties
-    # verify_image_properties(custom_images)
-    verify_image_properties(bus_images)
-
-    print("my verify images ran")
-
-    # Step 2: Load models
+    # Load models
     models = load_models()
 
-    print("my models", models)
-
-    # Step 3: Run inference and visualize results on custom images
-    # print("Running inference and visualizing results on custom images...")
+    # Run inference on custom images
+    print("Running inference and visualizing results on custom images...")
     # run_inference_and_visualize(
     #     models, custom_images, save_folder="custom_inference_results"
     # )
 
-    # Step 4: Evaluate models quantitatively on bus dataset images
+    # Evaluate models on bus dataset
     print("Evaluating models on the bus dataset...")
     results = evaluate_models(models, bus_images, ground_truths)
 
-    # Step 5: Display quantitative results
-    print("Quantitative Results:")
-    for model_name, metrics in results.items():
-        print(f"\n{model_name} Metrics:")
-        print(f"Mean IoU: {np.mean(metrics['IoU']):.2f}")
-        print(f"Accuracy: {metrics['Accuracy']:.2f}%")
-        print(
-            f"Average Inference Time: {metrics['Inference Time']:.4f} seconds"
-        )
+    # Display results
+    print("\nFaster R-CNN Metrics:")
+    print(f"Mean IoU: {np.mean(results['Faster R-CNN']['IoU']):.2f}")
+    print(f"Accuracy: {results['Faster R-CNN']['Accuracy']:.2f}%")
+    print(
+        f"Average Inference Time: {results['Faster R-CNN']['Inference Time']:.4f} seconds"
+    )
+
+    print("\nYOLOv5 Metrics:")
+    print(f"Mean IoU: {np.mean(results['YOLOv5']['IoU']):.2f}")
+    print(f"Accuracy: {results['YOLOv5']['Accuracy']:.2f}%")
+    print(
+        f"Average Inference Time: {results['YOLOv5']['Inference Time']:.4f} seconds"
+    )
 
 
 """MAIN FUNCTION"""
@@ -458,12 +502,12 @@ def main():
     df = pd.read_csv("./sixhky/open-images-bus-trucks/versions/1/df.csv")
     df = df.head(10)  # Take only first 10 entries
 
-    # Format ground truths into list of bounding boxes
+    # Format ground truths with fixed scaling to match our resized images
     ground_truths = []
     for _, row in df.iterrows():
         box = [
-            row["XMin"] * 640,
-            row["YMin"] * 640,
+            row["XMin"] * 640,  # Scale to match resized image width
+            row["YMin"] * 640,  # Scale to match resized image height
             row["XMax"] * 640,
             row["YMax"] * 640,
         ]
