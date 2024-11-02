@@ -409,13 +409,13 @@ def run(custom_images_folder, bus_dataset_folder, ground_truths):
         ground_truths (list): List of ground truth bounding boxes for the bus dataset.
     """
     # Step 1: Load and preprocess images
-    custom_images = load_and_preprocess_custom_images(custom_images_folder)
+    # custom_images = load_and_preprocess_custom_images(custom_images_folder)
     bus_images = load_and_preprocess_bus_dataset(bus_dataset_folder)
 
     print("my custom images", custom_images)
 
     # Debugging: Verify image properties
-    verify_image_properties(custom_images)
+    # verify_image_properties(custom_images)
     verify_image_properties(bus_images)
 
     print("my verify images ran")
@@ -426,10 +426,10 @@ def run(custom_images_folder, bus_dataset_folder, ground_truths):
     print("my models", models)
 
     # Step 3: Run inference and visualize results on custom images
-    print("Running inference and visualizing results on custom images...")
-    run_inference_and_visualize(
-        models, custom_images, save_folder="custom_inference_results"
-    )
+    # print("Running inference and visualizing results on custom images...")
+    # run_inference_and_visualize(
+    #     models, custom_images, save_folder="custom_inference_results"
+    # )
 
     # Step 4: Evaluate models quantitatively on bus dataset images
     print("Evaluating models on the bus dataset...")
