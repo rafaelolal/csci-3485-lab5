@@ -91,13 +91,11 @@ def load_and_preprocess_bus_dataset(bus_dataset_folder):
         ]
     )
 
-    images = []
-    for i, image_path in enumerate(glob.glob(f"{bus_dataset_folder}/*.jpg")):
-        if i >= 10:  # Stop after 10 images
-            break
+    images = {}
+    for _, image_path in enumerate(glob.glob(f"{bus_dataset_folder}/*.jpg")):
         image = Image.open(image_path).convert("RGB")
         image = transform(image)
-        images.append(image)
+        images[image_path] = image
 
     return images
 
@@ -263,8 +261,8 @@ def compute_iou(boxesA, boxesB):
     Returns:
         tensor: IoU values of shape (N, M) between all pairs of boxes
     """
-    print("my boxesA", boxesA)
-    print("my boxesB", boxesB)
+    print("my boxesA: ", boxesA)
+    print("my boxesB: ", boxesB)
 
     # Convert inputs to tensors and ensure they're properly shaped
     boxesA = torch.as_tensor(boxesA, dtype=torch.float32).flatten()
@@ -307,12 +305,13 @@ def calculate_accuracy(
         float: Accuracy as the percentage of correct detections.
     """
     correct_detections = 0
-    for pred in predictions:
-        for gt in ground_truths:
-            iou = compute_iou(pred["box"], gt)
-            if iou >= iou_threshold and pred["score"] >= confidence_threshold:
-                correct_detections += 1
-                break
+    for name in ground_truths:
+        pred = predictions[name]
+        gt = ground_truths[name]
+        iou = compute_iou(pred["box"], gt)
+        if iou >= iou_threshold and pred["score"] >= confidence_threshold:
+            correct_detections += 1
+            break
 
     accuracy = correct_detections / len(predictions) if predictions else 0
     return accuracy * 100
@@ -332,6 +331,7 @@ def measure_inference_time(model, name, images):
     start_time = time.time()
     with torch.no_grad():
         for image in images:
+            image = images[image]
             if name == "YOLOv5":  # Check if it's YOLOv5
                 # Convert tensor to numpy, then back to proper format for YOLO
                 img_np = image.cpu().numpy()
@@ -367,9 +367,10 @@ def evaluate_models(models, images, ground_truths):
     }
 
     # Faster R-CNN predictions
-    frcnn_predictions = []
+    frcnn_predictions = {}
     with torch.no_grad():
-        for img in images:
+        for name in images:
+            img = images[name]
             pred = faster_rcnn([img])[0]
             if len(pred["boxes"]) > 0:
                 # Take top 3 predictions instead of just the best one
@@ -378,19 +379,19 @@ def evaluate_models(models, images, ground_truths):
                 )
 
                 for idx in indices:
-                    frcnn_predictions.append(
-                        {
-                            "box": pred["boxes"][idx].cpu().numpy(),
-                            "score": pred["scores"][idx].item(),
-                        }
-                    )
+                    frcnn_predictions[name] = {
+                        "box": pred["boxes"][idx].cpu().numpy(),
+                        "score": pred["scores"][idx].item(),
+                    }
+
             else:
-                frcnn_predictions.append({"box": np.zeros(4), "score": 0})
+                frcnn_predictions[name] = {"box": np.zeros(4), "score": 0}
 
     # YOLOv5 predictions with proper normalization
-    yolo_predictions = []
+    yolo_predictions = {}
     with torch.no_grad():
-        for img in images:
+        for name in images:
+            img = images[name]
             # Convert to correct format for YOLO
             img_np = img.cpu().numpy()
             img_np = np.transpose(img_np, (1, 2, 0))
@@ -406,23 +407,22 @@ def evaluate_models(models, images, ground_truths):
                     pred.xyxy[0][:, 4], min(3, len(pred.xyxy[0]))
                 )
                 for idx in indices:
-                    yolo_predictions.append(
-                        {
-                            "box": pred.xyxy[0][idx][:4].cpu().numpy(),
-                            "score": pred.xyxy[0][idx][4].item(),
-                        }
-                    )
+                    yolo_predictions[name] = {
+                        "box": pred.xyxy[0][idx][:4].cpu().numpy(),
+                        "score": pred.xyxy[0][idx][4].item(),
+                    }
+
             else:
-                yolo_predictions.append({"box": np.zeros(4), "score": 0})
+                yolo_predictions[name] = {"box": np.zeros(4), "score": 0}
 
     # Calculate metrics with adjusted thresholds
     results["Faster R-CNN"]["IoU"] = [
-        compute_iou(pred["box"], gt)
-        for pred, gt in zip(frcnn_predictions, ground_truths)
+        compute_iou(frcnn_predictions[name], ground_truths[name])
+        for name in ground_truths
     ]
     results["YOLOv5"]["IoU"] = [
-        compute_iou(pred["box"], gt)
-        for pred, gt in zip(yolo_predictions, ground_truths)
+        compute_iou(yolo_predictions["box"], ground_truths[name])
+        for name in ground_truths
     ]
 
     # Calculate accuracy with new thresholds
@@ -460,6 +460,18 @@ def run(custom_images_folder, bus_dataset_folder, ground_truths):
     # custom_images = load_and_preprocess_custom_images(custom_images_folder)
     bus_images = load_and_preprocess_bus_dataset(bus_dataset_folder)
 
+    # Format ground truths with fixed scaling to match our resized images
+    resized_ground_truths = []
+    for _, row in ground_truths.iterrows():
+        if f"{row['ImageID']}.jpg" in bus_images:
+            box = [
+                row["XMin"] * 640,  # Scale to match resized image width
+                row["YMin"] * 640,  # Scale to match resized image height
+                row["XMax"] * 640,
+                row["YMax"] * 640,
+            ]
+            resized_ground_truths[f"{row['ImageID']}.jpg"] = box
+
     # Load models
     models = load_models()
 
@@ -471,7 +483,7 @@ def run(custom_images_folder, bus_dataset_folder, ground_truths):
 
     # Evaluate models on bus dataset
     print("Evaluating models on the bus dataset...")
-    results = evaluate_models(models, bus_images, ground_truths)
+    results = evaluate_models(models, bus_images, resized_ground_truths)
 
     # Display results
     print("\nFaster R-CNN Metrics:")
@@ -495,25 +507,13 @@ def run(custom_images_folder, bus_dataset_folder, ground_truths):
 def main():
     custom_images_folder = "./images"
     bus_dataset_folder = (
-        "./sixhky/open-images-bus-trucks/versions/1/images/images"
+        "./sixhky/open-images-bus-trucks/versions/1/images/less_images"
     )
 
     # Load ground truths from CSV
     df = pd.read_csv("./sixhky/open-images-bus-trucks/versions/1/df.csv")
-    df = df.head(10)  # Take only first 10 entries
 
-    # Format ground truths with fixed scaling to match our resized images
-    ground_truths = []
-    for _, row in df.iterrows():
-        box = [
-            row["XMin"] * 640,  # Scale to match resized image width
-            row["YMin"] * 640,  # Scale to match resized image height
-            row["XMax"] * 640,
-            row["YMax"] * 640,
-        ]
-        ground_truths.append(box)
-
-    run(custom_images_folder, bus_dataset_folder, ground_truths)
+    run(custom_images_folder, bus_dataset_folder, df)
 
 
 main()
