@@ -95,7 +95,7 @@ def load_and_preprocess_bus_dataset(bus_dataset_folder):
     for _, image_path in enumerate(glob.glob(f"{bus_dataset_folder}/*.jpg")):
         image = Image.open(image_path).convert("RGB")
         image = transform(image)
-        images[image_path] = image
+        images[image_path.split("/")[-1]] = image
 
     return images
 
@@ -261,8 +261,8 @@ def compute_iou(boxesA, boxesB):
     Returns:
         tensor: IoU values of shape (N, M) between all pairs of boxes
     """
-    print("my boxesA: ", boxesA)
-    print("my boxesB: ", boxesB)
+    print("my boxesA: ", boxesA, flush=True)
+    print("my boxesB: ", boxesB, flush=True)
 
     # Convert inputs to tensors and ensure they're properly shaped
     boxesA = torch.as_tensor(boxesA, dtype=torch.float32).flatten()
@@ -415,13 +415,15 @@ def evaluate_models(models, images, ground_truths):
             else:
                 yolo_predictions[name] = {"box": np.zeros(4), "score": 0}
 
+    print("my yolo prediction:", yolo_predictions, flush=True)
+    print("my ground truths:", ground_truths, flush=True)
     # Calculate metrics with adjusted thresholds
     results["Faster R-CNN"]["IoU"] = [
-        compute_iou(frcnn_predictions[name], ground_truths[name])
+        compute_iou(frcnn_predictions[name]["box"], ground_truths[name])
         for name in ground_truths
     ]
     results["YOLOv5"]["IoU"] = [
-        compute_iou(yolo_predictions["box"], ground_truths[name])
+        compute_iou(yolo_predictions[name]["box"], ground_truths[name])
         for name in ground_truths
     ]
 
@@ -461,7 +463,7 @@ def run(custom_images_folder, bus_dataset_folder, ground_truths):
     bus_images = load_and_preprocess_bus_dataset(bus_dataset_folder)
 
     # Format ground truths with fixed scaling to match our resized images
-    resized_ground_truths = []
+    resized_ground_truths = {}
     for _, row in ground_truths.iterrows():
         if f"{row['ImageID']}.jpg" in bus_images:
             box = [
