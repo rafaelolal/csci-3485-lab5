@@ -81,20 +81,20 @@ def load_and_preprocess_bus_dataset(bus_dataset_folder):
     Returns:
         List[torch.Tensor]: List of preprocessed images from the bus dataset.
     """
-    # Reuse the same transform pipeline for consistency
     transform = transforms.Compose(
         [
-            transforms.Resize((640, 640)),  # Resize to standard input size
+            transforms.Resize((640, 640)),
             transforms.ToTensor(),
             transforms.Normalize(
                 mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-            ),  # Normalization for ImageNet-trained models
+            ),
         ]
     )
 
-    # Load and transform each image in the bus dataset folder
     images = []
-    for image_path in glob.glob(f"{bus_dataset_folder}/*.jpg"):
+    for i, image_path in enumerate(glob.glob(f"{bus_dataset_folder}/*.jpg")):
+        if i >= 10:  # Stop after 10 images
+            break
         image = Image.open(image_path).convert("RGB")
         image = transform(image)
         images.append(image)
@@ -441,19 +441,19 @@ def main():
 
     # Load ground truths from CSV
     df = pd.read_csv("./sixhky/open-images-bus-trucks/versions/1/df.csv")
+    df = df.head(10)  # Take only first 10 entries
 
     # Format ground truths into list of bounding boxes
     ground_truths = []
     for _, row in df.iterrows():
         box = [
-            row["XMin"] * 640,  # Scale to match image size
+            row["XMin"] * 640,
             row["YMin"] * 640,
             row["XMax"] * 640,
             row["YMax"] * 640,
         ]
         ground_truths.append(box)
 
-    # Run the lab pipeline
     run(custom_images_folder, bus_dataset_folder, ground_truths)
 
 
