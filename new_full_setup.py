@@ -92,7 +92,11 @@ def load_and_preprocess_bus_dataset(bus_dataset_folder):
     )
 
     images = {}
+    i = 0
     for _, image_path in enumerate(glob.glob(f"{bus_dataset_folder}/*.jpg")):
+        if i == 3:
+            break
+        i += 1
         image = Image.open(image_path).convert("RGB")
         image = transform(image)
         images[image_path.split("/")[-1]] = image
@@ -252,41 +256,41 @@ def run_inference_and_visualize(
 
 def compute_iou(boxesA, boxesB):
     """
-    Computes Intersection over Union (IoU) between two sets of bounding boxes.
+    Computes maximum IoU between a list of boxes and a single target box.
 
     Args:
-        boxesA (tensor): Tensor of shape (N, 4) containing N bounding boxes [x1, y1, x2, y2]
-        boxesB (tensor): Tensor of shape (M, 4) containing M bounding boxes [x1, y1, x2, y2]
+        boxesA (list): List of dictionaries containing boxes and scores
+        boxesB (list): Single box coordinates [x1, y1, x2, y2]
 
     Returns:
-        tensor: IoU values of shape (N, M) between all pairs of boxes
+        float: Maximum IoU value among all boxes
     """
-    print("my boxesA: ", boxesA, flush=True)
-    print("my boxesB: ", boxesB, flush=True)
+    max_iou = 0.0
+    boxesB = torch.as_tensor(boxesB, dtype=torch.float32)
 
-    # Convert inputs to tensors and ensure they're properly shaped
-    boxesA = torch.as_tensor(boxesA, dtype=torch.float32).flatten()
-    boxesB = torch.as_tensor(boxesB, dtype=torch.float32).flatten()
+    for box_dict in boxesA:
+        boxA = torch.as_tensor(box_dict["box"], dtype=torch.float32)
 
-    # Find intersecting box coordinates
-    xA = torch.maximum(boxesA[0], boxesB[0])
-    yA = torch.maximum(boxesA[1], boxesB[1])
-    xB = torch.minimum(boxesA[2], boxesB[2])
-    yB = torch.minimum(boxesA[3], boxesB[3])
+        # Find intersecting box coordinates
+        xA = torch.maximum(boxA[0], boxesB[0])
+        yA = torch.maximum(boxA[1], boxesB[1])
+        xB = torch.minimum(boxA[2], boxesB[2])
+        yB = torch.minimum(boxA[3], boxesB[3])
 
-    # Calculate intersection area
-    interArea = torch.maximum(torch.tensor(0.0), xB - xA + 1) * torch.maximum(
-        torch.tensor(0.0), yB - yA + 1
-    )
+        # Calculate intersection area
+        interArea = torch.maximum(
+            torch.tensor(0.0), xB - xA + 1
+        ) * torch.maximum(torch.tensor(0.0), yB - yA + 1)
 
-    # Calculate box areas
-    boxAArea = (boxesA[2] - boxesA[0] + 1) * (boxesA[3] - boxesA[1] + 1)
-    boxBArea = (boxesB[2] - boxesB[0] + 1) * (boxesB[3] - boxesB[1] + 1)
+        # Calculate box areas
+        boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
+        boxBArea = (boxesB[2] - boxesB[0] + 1) * (boxesB[3] - boxesB[1] + 1)
 
-    # Calculate IoU
-    iou = interArea / (boxAArea + boxBArea - interArea)
+        # Calculate IoU
+        iou = interArea / (boxAArea + boxBArea - interArea)
+        max_iou = max(max_iou, iou.item())
 
-    return iou
+    return max_iou
 
 
 def calculate_accuracy(
@@ -308,8 +312,11 @@ def calculate_accuracy(
     for name in ground_truths:
         pred = predictions[name]
         gt = ground_truths[name]
-        iou = compute_iou(pred["box"], gt)
-        if iou >= iou_threshold and pred["score"] >= confidence_threshold:
+        iou = compute_iou(pred, gt)
+        if (
+            iou >= iou_threshold
+            and max(p["score"] for p in pred) >= confidence_threshold
+        ):
             correct_detections += 1
             break
 
@@ -375,14 +382,17 @@ def evaluate_models(models, images, ground_truths):
             if len(pred["boxes"]) > 0:
                 # Take top 3 predictions instead of just the best one
                 scores, indices = torch.topk(
-                    pred["scores"], min(5, len(pred["scores"]))
+                    pred["scores"], len(pred["scores"])
                 )
 
+                frcnn_predictions[name] = []
                 for idx in indices:
-                    frcnn_predictions[name] = {
-                        "box": pred["boxes"][idx].cpu().numpy(),
-                        "score": pred["scores"][idx].item(),
-                    }
+                    frcnn_predictions[name].append(
+                        {
+                            "box": pred["boxes"][idx].cpu().numpy(),
+                            "score": pred["scores"][idx].item(),
+                        }
+                    )
 
             else:
                 frcnn_predictions[name] = {"box": np.zeros(4), "score": 0}
@@ -400,17 +410,20 @@ def evaluate_models(models, images, ground_truths):
                 (img_np * [0.229, 0.224, 0.225] + [0.485, 0.456, 0.406]) * 255
             ).astype(np.uint8)
             pred = yolo(img_np)
-
+            print("my pred:", pred, flush=True)
             if len(pred.xyxy[0]) > 0:
                 # Take top 3 predictions
                 scores, indices = torch.topk(
-                    pred.xyxy[0][:, 4], min(3, len(pred.xyxy[0]))
+                    pred.xyxy[0][:, 4], len(pred.xyxy[0])
                 )
+                yolo_predictions[name] = []
                 for idx in indices:
-                    yolo_predictions[name] = {
-                        "box": pred.xyxy[0][idx][:4].cpu().numpy(),
-                        "score": pred.xyxy[0][idx][4].item(),
-                    }
+                    yolo_predictions[name].append(
+                        {
+                            "box": pred.xyxy[0][idx][:4].cpu().numpy(),
+                            "score": pred.xyxy[0][idx][4].item(),
+                        }
+                    )
 
             else:
                 yolo_predictions[name] = {"box": np.zeros(4), "score": 0}
@@ -419,11 +432,11 @@ def evaluate_models(models, images, ground_truths):
     print("my ground truths:", ground_truths, flush=True)
     # Calculate metrics with adjusted thresholds
     results["Faster R-CNN"]["IoU"] = [
-        compute_iou(frcnn_predictions[name]["box"], ground_truths[name])
+        compute_iou(frcnn_predictions[name], ground_truths[name])
         for name in ground_truths
     ]
     results["YOLOv5"]["IoU"] = [
-        compute_iou(yolo_predictions[name]["box"], ground_truths[name])
+        compute_iou(yolo_predictions[name], ground_truths[name])
         for name in ground_truths
     ]
 
