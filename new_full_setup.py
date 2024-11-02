@@ -263,13 +263,16 @@ def compute_iou(boxA, boxB):
     Returns:
         float: IoU value between 0 and 1.
     """
+    # Convert boxes to tensors if they aren't already
+    boxA = torch.tensor(boxA) if not isinstance(boxA, torch.Tensor) else boxA
+    boxB = torch.tensor(boxB) if not isinstance(boxB, torch.Tensor) else boxB
+
     # Use torch.maximum for tensor operations
     xA = torch.maximum(boxA[0], boxB[0])
     yA = torch.maximum(boxA[1], boxB[1])
     xB = torch.minimum(boxA[2], boxB[2])
     yB = torch.minimum(boxA[3], boxB[3])
 
-    # Rest of the function remains the same
     interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
     boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
     boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
