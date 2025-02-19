@@ -3,6 +3,7 @@
 import glob
 import os
 import time
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -30,6 +31,7 @@ else:
 print(f"Using device: {device}")
 
 """FUNCTIONS FOR LOADING/PROCESSING IMAGES"""
+
 
 def load_and_preprocess_custom_images(image_folder):
     """
@@ -109,27 +111,33 @@ def verify_image_properties(images):
 
 """FUNCTION FOR LOADING MODELS"""
 
+
 def load_models():
     """
     Loads and initializes both Faster R-CNN and YOLOv5 models for object detection.
 
     Returns:
-        Tuple[torch.nn.Module, torch.nn.Module, list]: 
+        Tuple[torch.nn.Module, torch.nn.Module, list]:
             A tuple containing initialized Faster R-CNN and YOLOv5 models and the Faster R-CNN classes.
     """
     # Load and initialize Faster R-CNN with ResNet backbone
-    faster_rcnn = fasterrcnn_resnet50_fpn(weights=FasterRCNN_ResNet50_FPN_Weights.DEFAULT)
-    faster_rcnn.eval()  
-    faster_rcnn_classes = FasterRCNN_ResNet50_FPN_Weights.DEFAULT.meta["categories"]
+    faster_rcnn = fasterrcnn_resnet50_fpn(
+        weights=FasterRCNN_ResNet50_FPN_Weights.DEFAULT
+    )
+    faster_rcnn.eval()
+    faster_rcnn_classes = FasterRCNN_ResNet50_FPN_Weights.DEFAULT.meta[
+        "categories"
+    ]
 
     # Load and initialize YOLOv5 from PyTorch Hub
     yolo = torch.hub.load("ultralytics/yolov5", "yolov5s", pretrained=True)
-    yolo.eval() 
+    yolo.eval()
 
     return faster_rcnn, yolo, faster_rcnn_classes
 
 
 """FUNCTION FOR RUNNING INFERENCE"""
+
 
 def run_inference_and_visualize(
     models, images, save_folder="inference_results", iou_threshold=0.5
@@ -236,7 +244,9 @@ def run_inference_and_visualize(
         plt.savefig(f"{save_folder}/yolo_image_{i+1}.png")
         plt.close()
 
+
 """FUNCTIONS FOR EVALUATING MODELS"""
+
 
 def compute_iou(pred_boxes, gt_box):
     """
@@ -259,10 +269,14 @@ def compute_iou(pred_boxes, gt_box):
         yA = torch.maximum(pred_box[1], gt_box[1])
         xB = torch.minimum(pred_box[2], gt_box[2])
         yB = torch.minimum(pred_box[3], gt_box[3])
-        inter_area = torch.maximum(torch.tensor(0.0), xB - xA + 1) * torch.maximum(torch.tensor(0.0), yB - yA + 1)
+        inter_area = torch.maximum(
+            torch.tensor(0.0), xB - xA + 1
+        ) * torch.maximum(torch.tensor(0.0), yB - yA + 1)
 
         # Compute union area
-        pred_area = (pred_box[2] - pred_box[0] + 1) * (pred_box[3] - pred_box[1] + 1)
+        pred_area = (pred_box[2] - pred_box[0] + 1) * (
+            pred_box[3] - pred_box[1] + 1
+        )
         gt_area = (gt_box[2] - gt_box[0] + 1) * (gt_box[3] - gt_box[1] + 1)
         union_area = pred_area + gt_area - inter_area
 
@@ -273,7 +287,9 @@ def compute_iou(pred_boxes, gt_box):
     return max_iou
 
 
-def calculate_accuracy(predictions, ground_truths, iou_threshold=0.5, confidence_threshold=0.5):
+def calculate_accuracy(
+    predictions, ground_truths, iou_threshold=0.5, confidence_threshold=0.5
+):
     """
     Calculates the accuracy of model predictions based on IoU and confidence thresholds.
 
@@ -288,25 +304,36 @@ def calculate_accuracy(predictions, ground_truths, iou_threshold=0.5, confidence
     """
     correct_detections = 0
     total_ground_truths = len(ground_truths)
-    
+
     for img_name, gt_info in ground_truths.items():
-        gt_box = gt_info['box']
-        gt_class = gt_info['class']
+        gt_box = gt_info["box"]
+        gt_class = gt_info["class"]
 
         # Filter predictions by matching class and confidence threshold
-        matching_preds = [pred for pred in predictions[img_name] 
-                          if pred["class"] == gt_class and pred["score"] >= confidence_threshold]
-        
+        print("my accuracy predictions", predictions[img_name], flush=True)
+        print("my accuracy ground truth", gt_info, flush=True)
+        matching_preds = [
+            pred
+            for pred in predictions[img_name]
+            if pred["class"] == gt_class.lower()
+            and pred["score"] >= confidence_threshold
+        ]
+
         if not matching_preds:
             continue  # No predictions match this ground truth class
-        
+
         # Find the best IoU for matching predictions with the ground truth box
         best_iou = compute_iou(matching_preds, gt_box)
-        
+
         if best_iou >= iou_threshold:
+            print("my correct detection", flush=True)
             correct_detections += 1
 
-    accuracy = (correct_detections / total_ground_truths) * 100 if total_ground_truths > 0 else 0
+    accuracy = (
+        (correct_detections / total_ground_truths) * 100
+        if total_ground_truths > 0
+        else 0
+    )
     return accuracy
 
 
@@ -365,14 +392,18 @@ def evaluate_models(models, images, ground_truths, faster_rcnn_classes):
             img = images[name]
             pred = faster_rcnn([img])[0]
             if len(pred["boxes"]) > 0:
-                scores, indices = torch.topk(pred["scores"], len(pred["scores"]))
+                scores, indices = torch.topk(
+                    pred["scores"], len(pred["scores"])
+                )
                 frcnn_predictions[name] = []
                 for idx in indices:
                     frcnn_predictions[name].append(
                         {
                             "box": pred["boxes"][idx].cpu().numpy(),
                             "score": pred["scores"][idx].item(),
-                            "class": faster_rcnn_classes[pred["labels"][idx].item()]
+                            "class": faster_rcnn_classes[
+                                pred["labels"][idx].item()
+                            ],
                         }
                     )
             else:
@@ -383,42 +414,62 @@ def evaluate_models(models, images, ground_truths, faster_rcnn_classes):
     with torch.no_grad():
         for name in images:
             img = images[name]
-            img_np = img.cpu().numpy().transpose(1, 2, 0)  # Convert to HWC format
-            img_np = ((img_np * [0.229, 0.224, 0.225]) + [0.485, 0.456, 0.406]) * 255  # Denormalize
+            img_np = (
+                img.cpu().numpy().transpose(1, 2, 0)
+            )  # Convert to HWC format
+            img_np = (
+                (img_np * [0.229, 0.224, 0.225]) + [0.485, 0.456, 0.406]
+            ) * 255  # Denormalize
             pred = yolo(img_np.astype(np.uint8))
-            
+
             yolo_predictions[name] = []
             if len(pred.xyxy[0]) > 0:
-                scores, indices = torch.topk(pred.xyxy[0][:, 4], len(pred.xyxy[0]))
+                scores, indices = torch.topk(
+                    pred.xyxy[0][:, 4], len(pred.xyxy[0])
+                )
                 for idx in indices:
                     yolo_predictions[name].append(
                         {
                             "box": pred.xyxy[0][idx][:4].cpu().numpy(),
                             "score": pred.xyxy[0][idx][4].item(),
-                            "class": yolo.names[int(pred.xyxy[0][idx][5].item())]
+                            "class": yolo.names[
+                                int(pred.xyxy[0][idx][5].item())
+                            ],
                         }
                     )
-    
+
     # Calculate metrics
     results["Faster R-CNN"]["IoU"] = [
-        compute_iou(frcnn_predictions[name], ground_truths[name]['box'])
+        compute_iou(frcnn_predictions[name], ground_truths[name]["box"])
         for name in ground_truths
     ]
     results["YOLOv5"]["IoU"] = [
-        compute_iou(yolo_predictions[name], ground_truths[name]['box'])
+        compute_iou(yolo_predictions[name], ground_truths[name]["box"])
         for name in ground_truths
     ]
-    
-    results["Faster R-CNN"]["Accuracy"] = calculate_accuracy(frcnn_predictions, ground_truths)
-    results["YOLOv5"]["Accuracy"] = calculate_accuracy(yolo_predictions, ground_truths)
-    
-    results["Faster R-CNN"]["Inference Time"] = measure_inference_time(faster_rcnn, "Faster R-CNN", images)
-    results["YOLOv5"]["Inference Time"] = measure_inference_time(yolo, "YOLOv5", images)
-    
+
+    results["Faster R-CNN"]["Accuracy"] = calculate_accuracy(
+        frcnn_predictions, ground_truths
+    )
+    print(
+        "my faster R-CNN Accuracy end :", results["Faster R-CNN"]["Accuracy"]
+    )
+    results["YOLOv5"]["Accuracy"] = calculate_accuracy(
+        yolo_predictions, ground_truths
+    )
+
+    results["Faster R-CNN"]["Inference Time"] = measure_inference_time(
+        faster_rcnn, "Faster R-CNN", images
+    )
+    results["YOLOv5"]["Inference Time"] = measure_inference_time(
+        yolo, "YOLOv5", images
+    )
+
     return results
 
 
 """WRAPPER FUNCTION FOR ALL STEPS"""
+
 
 def run(custom_images_folder, bus_dataset_folder, ground_truths):
     """
@@ -444,10 +495,14 @@ def run(custom_images_folder, bus_dataset_folder, ground_truths):
                 row["XMax"] * 640,
                 row["YMax"] * 640,
             ]
-            resized_ground_truths[f"{row['ImageID']}.jpg"] = {"box": box, "class": row["ClassName"]}
+            resized_ground_truths[f"{row['ImageID']}.jpg"] = {
+                "box": box,
+                "class": row["LabelName"],
+            }
 
     # Load models
     faster_rcnn, yolo, faster_rcnn_classes = load_models()
+    print("my faster rcnn classess", faster_rcnn_classes, flush=True)
 
     # Run inference on custom images
     print("Running inference and visualizing results on custom images...")
@@ -457,7 +512,12 @@ def run(custom_images_folder, bus_dataset_folder, ground_truths):
 
     # Evaluate models on bus dataset
     print("Evaluating models on the bus dataset...")
-    results = evaluate_models((faster_rcnn, yolo), bus_images, resized_ground_truths, faster_rcnn_classes)
+    results = evaluate_models(
+        (faster_rcnn, yolo),
+        bus_images,
+        resized_ground_truths,
+        faster_rcnn_classes,
+    )
 
     # Display results
     print("\nFaster R-CNN Metrics:")
@@ -476,6 +536,7 @@ def run(custom_images_folder, bus_dataset_folder, ground_truths):
 
 
 """MAIN FUNCTION"""
+
 
 def main():
     custom_images_folder = "./images"
